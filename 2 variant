@@ -1,11 +1,14 @@
-import tabula
+import pdfplumber
+import pandas as pd
+from sqlalchemy.dialects.mssql.information_schema import columns
 
-def vse_tablisi(pdf):
-  tables = tabula.read_pdf(pdf, pages='all', multiple_tables=True)
+pd.set_option('display.max_rows', None)  # Показать все строки
+pd.set_option('display.max_columns', None)  # Показать все столбцы
 
-  for i, table in enumerate(tables):
-    table.to_csv(f'test_{i+1}.csv', index=False)
-
-
-pdf = 'FS IFRS Rus 0624 disclosed.pdf'
-vse_tablisi(pdf)
+pdf = 'FS IFRS Rus 0321.pdf'
+with pdfplumber.open(pdf) as pdf:
+    for page in pdf.pages:
+        table = page.extract_table()
+        if table:
+            df = pd.DataFrame(table[1:], columns=table[0])
+            print(df)                  
