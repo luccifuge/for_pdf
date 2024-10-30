@@ -1,144 +1,28 @@
-# я нашел этот код в какой-то статье, но он не так выводит столбцы
-import PyPDF2
-from pdfminer.high_level import extract_pages, extract_text
-from pdfminer.layout import LTTextContainer, LTChar, LTRect, LTFigure
 import pdfplumber
-from PIL import Image
-from pdf2image import convert_from_path
-import pytesseract
-import os
+import pandas as pd
 
+pd.set_option('display.max_rows', None)
+pd.set_option('display.max_columns', None)
 
-# Функция для извлечения текста
-def text_extraction(element):
-    line_text = element.get_text()
-    return line_text.strip()
+pdf = 'FS IFRS Rus 0321.pdf'
+with pdfplumber.open(pdf) as pdf:
+    for page in pdf.pages:
+        table = page.extract_table({
+            'vertical_strategy': 'text',
+            'horizontal_strategy': 'text',
+            'text_x_tolerance': 3,
+            'text_y_tolerance': 3,
+            'intersection_x_tolerance': 3,
+            'intersection_y_tolerance': 3
+        })
+        if table:
+            table = [[cell.strip() if cell else '' for cell in row] for row in table if any(row)]
 
+            print("необработанная таблицы:")
+            for row in table:
+                print(row)
 
-# Функция для извлечения таблиц из PDF
-def extract_table(pdf_path, page_num, table_num):
-    pdf = pdfplumber.open(pdf_path)
-    table_page = pdf.pages[page_num]
-    table = table_page.extract_tables()[table_num]
-    return table
-
-
-# Конвертация таблицы в строковый формат
-def table_converter(table):
-    table_string = ''
-    for row in table:
-        cleaned_row = [item.replace('\n', ' ') if item else 'None' for item in row]
-        table_string += ('|' + '|'.join(cleaned_row) + '|' + '\n')
-    return table_string.strip()
-
-
-# Проверка, находится ли элемент внутри таблицы
-def is_element_inside_any_table(element, page, tables):
-    x0, y0up, x1, y1up = element.bbox
-    y0 = page.bbox[3] - y1up
-    y1 = page.bbox[3] - y0up
-    for table in tables:
-        tx0, ty0, tx1, ty1 = table.bbox
-        if tx0 <= x0 <= x1 <= tx1 and ty0 <= y0 <= y1 <= ty1:
-            return True
-    return False
-
-
-# Функция для обработки изображений
-def crop_image(element, pageObj):
-    [image_left, image_top, image_right, image_bottom] = [element.x0, element.y0, element.x1, element.y1]
-    pageObj.mediabox.lower_left = (image_left, image_bottom)
-    pageObj.mediabox.upper_right = (image_right, image_top)
-    cropped_pdf_writer = PyPDF2.PdfWriter()
-    cropped_pdf_writer.add_page(pageObj)
-    with open('cropped_image.pdf', 'wb') as cropped_pdf_file:
-        cropped_pdf_writer.write(cropped_pdf_file)
-
-
-# Конвертация PDF в изображения
-def convert_to_images(input_file):
-    images = convert_from_path(input_file)
-    image = images[0]
-    output_file = 'PDF_image.png'
-    image.save(output_file, 'PNG')
-
-
-# Извлечение текста из изображений
-def image_to_text(image_path):
-    img = Image.open(image_path)
-    text = pytesseract.image_to_string(img)
-    return text.strip()
-
-
-# Основной код для обработки PDF
-pdf_path = 'FS IFRS Rus 0624 disclosed.pdf'
-pdfFileObj = open(pdf_path, 'rb')
-pdfReaded = PyPDF2.PdfReader(pdfFileObj)
-text_per_page = {}
-image_flag = False
-
-# Извлечение страниц из PDF
-for pagenum, page in enumerate(extract_pages(pdf_path)):
-    pageObj = pdfReaded.pages[pagenum]
-    page_text = []
-    line_format = []
-    text_from_images = []
-    text_from_tables = []
-    page_content = []
-
-    pdf = pdfplumber.open(pdf_path)
-    page_tables = pdf.pages[pagenum]
-    tables = page_tables.find_tables()
-
-    # Извлечение таблиц со страницы
-    for table_num in range(len(tables)):
-        table = extract_table(pdf_path, pagenum, table_num)
-        table_string = table_converter(table)
-        text_from_tables.append(table_string)
-
-    # Найти все элементы на странице
-    page_elements = [(element.y1, element) for element in page._objs]
-    page_elements.sort(key=lambda a: a[0], reverse=True)
-
-    for i, component in enumerate(page_elements):
-        element = component[1]
-
-        # Обработка таблиц
-        if is_element_inside_any_table(element, page, tables):
-            table_found = next((i for i, t in enumerate(tables) if t.bbox[0] <= element.bbox[0] <= t.bbox[2]), None)
-            if table_found is not None:
-                page_content.append(text_from_tables[table_found])
-                page_text.append('table')
-                line_format.append('table')
-                continue
-
-        # Обработка текста
-        if isinstance(element, LTTextContainer):
-            line_text = text_extraction(element)
-            page_text.append(line_text)
-            line_format.append('text')
-            page_content.append(line_text)
-
-        # Обработка изображений
-        if isinstance(element, LTFigure):
-            crop_image(element, pageObj)
-            convert_to_images('cropped_image.pdf')
-            image_text = image_to_text('PDF_image.png')
-            text_from_images.append(image_text)
-            page_content.append(image_text)
-            page_text.append('image')
-            line_format.append('image')
-            image_flag = True
-
-    dctkey = 'Page_' + str(pagenum)
-    text_per_page[dctkey] = [page_text, line_format, text_from_images, text_from_tables, page_content]
-
-pdfFileObj.close()
-
-if image_flag:
-    os.remove('cropped_image.pdf')
-    os.remove('PDF_image.png')
-
-# Вывод результатов первой страницы
-result = "\n".join(text_per_page['Page_0'][4])  # Объединение с переносами строк
-print(result)
+            if len(table) > 1:
+                df = pd.DataFrame(table[1:], columns=table[0])
+                df = df.dropna(axis=1, how='all')
+                print(df)
