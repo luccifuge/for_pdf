@@ -1,18 +1,20 @@
 import pdfplumber
 import pandas as pd
+pd.set_option('display.max_rows', None)
+pd.set_option('display.max_columns', None)
 
-pdf = 'FS IFRS Rus 0624 disclosed.pdf'
-csv= 'test.csv'
-
-result = []
-
+pdf = 'FS IFRS Rus 0321.pdf'
 with pdfplumber.open(pdf) as pdf:
-
     for page in pdf.pages:
-        tables = page.extract_tables()
-        for i in tables:
-
-            result.extend(i)
-
-df = pd.DataFrame(result[1:], columns=result[0])
-df.to_csv(csv, index=False)
+        table = page.extract_table({
+            'vertical_strategy': 'text',
+            'horizontal_strategy': 'text',
+            'intersection_x_tolerance': 15,
+            'intersection_y_tolerance': 15
+        })
+        if table:
+            table = [[cell.strip() if cell else '' for cell in row] for row in table if any(row)]
+            if len(table) > 1:
+                df = pd.DataFrame(table[1:], columns=table[0])
+                df = df.dropna(axis=1, how='all')
+                print(df)
