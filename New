@@ -1,0 +1,44 @@
+from langchain import LLMChain
+from langchain.prompts import PromptTemplate
+from langchain.llms import OpenAI
+import fitz  # PyMuPDF для извлечения текста из PDF
+import pandas as pd
+import json
+
+# Функция для извлечения текста из PDF
+def extract_text_from_pdf(pdf_path):
+    text = ""
+    with fitz.open(pdf_path) as pdf:
+        for page in pdf:
+            text += page.get_text("text") + "\n"
+    return text
+
+# Инициализация OpenAI для LangChain
+llm = OpenAI(model_name="text-davinci-003", openai_api_key="your_openai_api_key")
+
+# Шаблон для преобразования текста в таблицу
+template = """This is a text extracted from a PDF document:
+{text}
+
+Please convert this text into a structured table with rows and columns, in JSON format. 
+Each row should represent a unique entry, and each column should represent a specific attribute from the table.
+"""
+
+# Инициализация цепочки LangChain с созданием промпта
+prompt = PromptTemplate(input_variables=["text"], template=template)
+chain = LLMChain(prompt=prompt, llm=llm)
+
+# Извлечение текста из PDF
+pdf_path = "/mnt/data/FS IFRS Rus 0321.pdf"
+raw_text = extract_text_from_pdf(pdf_path)
+
+# Запуск модели LangChain для преобразования текста в таблицу
+response = chain.run(text=raw_text)
+
+# Преобразование ответа в DataFrame для обработки таблиц
+try:
+    data = json.loads(response)  # преобразуем JSON ответ модели
+    df = pd.DataFrame(data)  # создаем таблицу из данных
+    print(df)
+except json.JSONDecodeError:
+    print("Ошибка: Невозможно декодировать ответ в JSON. Ответ модели:", response)
