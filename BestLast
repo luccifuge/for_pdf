@@ -1,0 +1,84 @@
+import requests
+import pandas as pd
+import pdfplumber
+import json
+
+
+# Функция для извлечения текста таблиц с помощью pdfplumber
+def extract_tables_from_pdf(pdf_path):
+    extracted_tables = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            tables = page.extract_tables()
+            for table in tables:
+                # Конвертируем таблицу в DataFrame
+                df = pd.DataFrame(table[1:], columns=table[0])  # предполагаем, что первая строка - это заголовок
+                extracted_tables.append(df)
+    return extracted_tables
+
+
+# Класс для работы с Proxy API
+class ProxyAPIClient:
+    def __init__(self, api_key, base_url="https://api.proxyapi.ru/openai/v1", model="gpt-4o-mini"):
+        self.api_key = api_key
+        self.base_url = base_url
+        self.model = model
+
+    def send_to_proxy_api(self, prompt, command="other_command"):
+        try:
+            messages = [
+                {"role": "system",
+                 "content": "Выведи ответ, если будешь выводить жирный текст, то ставь одну звездочку, а не две"},
+                {"role": "user", "content": prompt}
+            ]
+
+            response = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": self.model,
+                    "messages": messages
+                }
+            )
+
+            response.raise_for_status()
+            data = response.json()
+            return data["choices"][0]["message"]["content"]
+
+        except Exception as e:
+            return f"An error occurred while communicating with the proxy API: {e}"
+
+
+# Инициализация Proxy API с правильными значениями
+proxy_api_key = "sk-8C0s3SZaqTvM81bYBCLze5wF8doijBWS"
+client = ProxyAPIClient(api_key=proxy_api_key)
+
+# Шаблон для преобразования таблицы в структурированный JSON формат
+template = """This is a table extracted from a PDF document:
+{text}
+
+Please convert this table into a structured JSON format where each row represents a unique entry, and each column represents a specific attribute from the table.
+"""
+
+# Извлечение таблиц из PDF
+pdf_path = "FS IFRS Rus 0921.pdf"
+extracted_tables = extract_tables_from_pdf(pdf_path)
+
+# Обработка каждой таблицы с помощью Proxy API
+structured_data = []
+for table in extracted_tables:
+    raw_text = table.to_string(index=False)
+    prompt = template.format(text=raw_text)
+    response = client.send_to_proxy_api(prompt=prompt)
+    try:
+        data = json.loads(response)  # преобразуем JSON ответ модели
+        structured_data.append(data)
+    except json.JSONDecodeError:
+        print("Ошибка: Невозможно декодировать ответ в JSON. Ответ модели:", response)
+
+# Преобразование всех таблиц в один DataFrame
+all_tables_df = pd.concat([pd.DataFrame(data) for data in structured_data], ignore_index=True)
+print(all_tables_df)
