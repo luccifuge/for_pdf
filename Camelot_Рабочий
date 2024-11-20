@@ -1,0 +1,113 @@
+import os
+import sys
+import camelot
+import pandas as pd
+import sqlite3
+import re
+
+
+# это там нужно было что понять, что не работает (питон 3.11)
+def check():
+    print(f"Python версия: {sys.version}")
+    print(f"Camelot версия: {camelot.__version__}")
+    print(f"Путь к Python: {sys.executable}")
+
+
+def export_tables(pdf_path):
+    try:
+        # есть разные режимы, тут я стрим использовал
+        tables = camelot.read_pdf(pdf_path, pages='all', flavor='stream')
+
+        print(f"Нашлсь таблиц: {len(tables)}")
+        return tables
+
+    except Exception as e:
+        print(f"Ошибка при чтении PDF: {e}")
+        return None
+
+
+def finall_znach(value):
+    """
+    удаляет скобки вокруг значения и пробразует его в число, если это возможно
+    """
+    # Удаляем скобки если они есть и пробелы
+    if isinstance(value, str):
+        value = re.sub(r'^\((.*?)\)$', r'\1', value).strip()
+
+    # пробуем преобразовать значение в числовой тип
+    try:
+        return float(value.replace(',', ''))
+    except ValueError:
+        return value  # если преобразовать не удалось, возвращаем оригинал
+
+
+def soedin_stroki_vmeste(df):
+    """
+    объединяет строки, если первое значение в столбце начинается с маленькой буквы или скобки,
+    сохраняя значения из других столбцов и очищая числовые значения от скобок
+    """
+    rows = []
+    buffer_row = None
+
+    for index, row in df.iterrows():
+        first_cell = row[0]
+
+        # чекаем начинается ли строка с маленькой буквы или со скобки и не пустая ли она
+        if first_cell and (first_cell[0].islower() or first_cell[0] == '('):
+            if buffer_row is not None:
+                buffer_row[0] += " " + first_cell  # склеиваем текст в первом столбце
+            else:
+                buffer_row = row.copy()  # создаем буферную строку, если её нет
+
+            # если значения в остальных столбцах есть, обновляем их в буфере
+            for col in range(1, len(row)):
+                if pd.notna(row[col]):
+                    buffer_row[col] = row[col]
+
+        else:
+            if buffer_row is not None:
+                # очищаем значения в буферной строке
+                buffer_row = buffer_row.apply(finall_znach)
+                rows.append(buffer_row)
+                buffer_row = None
+
+            buffer_row = row.copy()
+
+    if buffer_row is not None:
+        buffer_row = buffer_row.apply(finall_znach)
+        rows.append(buffer_row)
+
+    return pd.DataFrame(rows, columns=df.columns)
+
+
+def save_to_bd(tables, db_path="extracted_data.db"):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    for i, table in enumerate(tables):
+        df = table.df
+        df = soedin_stroki_vmeste(df)
+
+        # определяем типы данных для столбцов: TEXT для первого столбца и REAL для остальных (тк первый всегда TEXT)
+        dtype = {col: "REAL" for col in df.columns[1:]}
+        dtype[df.columns[0]] = "TEXT"
+
+        table_name = f"Table_{i + 1}"
+        df.to_sql(table_name, conn, if_exists="replace", index=False, dtype=dtype)
+        print(f"Таблица '{table_name}' успешно сохранена в базу данных.")
+
+    conn.commit()
+    conn.close()
+    print(f"Все таблицы сохранены в базу данных: {db_path}")
+
+
+
+if __name__ == "__main__":
+    print("Проверка окружения:")
+    check()
+
+    pdf_path = r"IFRS_3m2024.pdf"
+    tables = export_tables(pdf_path)
+
+    if tables:
+        save_to_bd(tables)
